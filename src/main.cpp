@@ -4,7 +4,24 @@
 
 #include <iostream>
 
+double hit_sphere(const point3& center, double radius, const ray& r) {
+    vec3 oc = center - r.origin();
+    auto a = dot(r.direction(), r.direction());
+    auto b = -2.0 * dot(r.direction(), oc);
+    auto c = dot(oc, oc) - radius*radius;
+    auto discriminant = b*b - 4*a*c;
+
+    if (discriminant < 0) return -1.0;
+    return (-b - std::sqrt(discriminant)) / (2.0*a);
+}
+
 color ray_color(const ray& r) {
+    auto t = hit_sphere(point3(0, 0, -1), 0.5, r);
+    if (t > 0.0) {
+        vec3 n = unit_vector(point3(0, 0, -1) - r.at(t));
+        return 0.5 * color(n.x() + 1, n.y() + 1, n.z() + 1);
+    }
+
     vec3 unit_direction = unit_vector(r.direction());
     auto a = 0.5 * (unit_direction.y() + 1.0);
     return (1.0 - a) * color(1.0, 1.0, 1.0) + a * color(0.5, 0.7, 1.0);
@@ -37,8 +54,7 @@ int main() {
         std::clog << "\rlines left: " << (image_height - j) << ' ' << std::flush;
         for (int i = 0; i < image_width; i++) {
             auto pixel_center = pixel00_loc + (i * pixel_delta_u) + (j * pixel_delta_v);
-            auto ray_direction = pixel_center - camera_center;
-            ray r(camera_center, ray_direction);
+            ray r(camera_center, pixel_center - camera_center);
 
             write_color(std::cout, ray_color(r));
         }
