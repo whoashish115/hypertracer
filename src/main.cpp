@@ -18,7 +18,7 @@ double hit_sphere(const point3& center, double radius, const ray& r) {
 color ray_color(const ray& r) {
     auto t = hit_sphere(point3(0, 0, -1), 0.5, r);
     if (t > 0.0) {
-        vec3 n = unit_vector(point3(0, 0, -1) - r.at(t));
+        vec3 n = unit_vector(r.at(t) - point3(0, 0, -1));
         return 0.5 * color(n.x() + 1, n.y() + 1, n.z() + 1);
     }
 
