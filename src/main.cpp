@@ -1,8 +1,4 @@
-#include "color.h"
-#include "ray.h"
-#include "vec3.h"
-
-#include <iostream>
+#include "rtweekend.h"
 
 double hit_sphere(const point3& center, double radius, const ray& r) {
     vec3 oc = center - r.origin();
