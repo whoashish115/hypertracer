@@ -16,7 +16,7 @@ class bvh_node : public hittable {
         for (size_t i = start; i < end; i++)
             bbox = aabb(bbox, objects[i]->bounding_box());
 
-        int axis = 0;
+        int axis = bbox.longest_axis();
         auto cmp = (axis == 0) ? box_x_compare
                  : (axis == 1) ? box_y_compare
                                : box_z_compare;
