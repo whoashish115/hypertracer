@@ -7,21 +7,37 @@
 
 class box : public hittable {
   public:
-    box(const point3& center, const vec3& size, shared_ptr<material> mat)
+    box(const point3& center, const vec3& size, shared_ptr<material> mat, double angle_y = 0)
       : center(center), half(std::fabs(size.x())/2, std::fabs(size.y())/2, std::fabs(size.z())/2),
         mat(mat)
     {
-        bbox = aabb(center - half, center + half);
+        auto radians = degrees_to_radians(angle_y);
+        sin_theta = std::sin(radians);
+        cos_theta = std::cos(radians);
+
+        point3 lo( infinity, infinity, infinity);
+        point3 hi(-infinity, -infinity, -infinity);
+        for (int i = 0; i < 8; i++) {
+            vec3 corner((i & 1) ? half.x() : -half.x(),
+                        (i & 2) ? half.y() : -half.y(),
+                        (i & 4) ? half.z() : -half.z());
+            auto p = center + to_world(corner);
+            for (int a = 0; a < 3; a++) {
+                lo[a] = std::fmin(lo[a], p[a]);
+                hi[a] = std::fmax(hi[a], p[a]);
+            }
+        }
+        bbox = aabb(lo, hi);
     }
 
-    box(const point3& center, double side, shared_ptr<material> mat)
-      : box(center, vec3(side, side, side), mat) {}
+    box(const point3& center, double side, shared_ptr<material> mat, double angle_y = 0)
+      : box(center, vec3(side, side, side), mat, angle_y) {}
 
     aabb bounding_box() const override { return bbox; }
 
     bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
-        vec3 origin = r.origin() - center;
-        vec3 direction = r.direction();
+        vec3 origin = to_local(r.origin() - center);
+        vec3 direction = to_local(r.direction());
 
         auto tmin = -infinity, tmax = infinity;
         int axis_min = 0, axis_max = 0;
@@ -69,7 +85,16 @@ class box : public hittable {
     point3 center;
     vec3 half;
     shared_ptr<material> mat;
+    double sin_theta, cos_theta;
     aabb bbox;
+
+    vec3 to_local(const vec3& v) const {
+        return vec3(cos_theta*v.x() - sin_theta*v.z(), v.y(), sin_theta*v.x() + cos_theta*v.z());
+    }
+
+    vec3 to_world(const vec3& v) const {
+        return vec3(cos_theta*v.x() + sin_theta*v.z(), v.y(), -sin_theta*v.x() + cos_theta*v.z());
+    }
 };
 
 #endif
