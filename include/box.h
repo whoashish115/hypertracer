@@ -76,7 +76,7 @@ class box : public hittable {
         rec.p = r.at(rec.t);
         vec3 n(0, 0, 0);
         n[axis] = sign;
-        rec.set_face_normal(r, n);
+        rec.set_face_normal(r, to_world(n));
         rec.mat = mat;
         return true;
     }
