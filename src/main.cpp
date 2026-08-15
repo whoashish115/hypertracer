@@ -68,6 +68,9 @@ int main() {
     cam.samples_per_pixel = 300;
     cam.max_depth = 50;
 
+    cam.sky_bottom = color(1.0, 1.0, 1.0);
+    cam.sky_top = color(0.5, 0.7, 1.0);
+
     cam.vfov = 20;
     cam.lookfrom = point3(13,2,3);
     cam.lookat = point3(0,0,0);

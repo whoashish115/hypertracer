@@ -17,6 +17,8 @@ public:
     vec3 vup = vec3(0, 1, 0);
     double defocus_angle = 0; // Variation angle of rays through each pixel
     double focus_dist = 10;
+    color sky_bottom = color(0, 0, 0);
+    color sky_top = color(0, 0, 0);
     void render(const hittable &world)
     {
         initialize();
@@ -97,15 +99,17 @@ private:
         if (!world.hit(r, interval(0.001, infinity), rec))
         {
             auto a = 0.5 * (unit_vector(r.direction()).y() + 1.0);
-            return (1.0 - a) * color(1.0, 1.0, 1.0) + a * color(0.5, 0.7, 1.0);
+            return (1.0 - a) * sky_bottom + a * sky_top;
         }
+
+        color color_from_emission = rec.mat->emitted();
 
         ray scattered;
         color attenuation;
         if (!rec.mat->scatter(r, rec, attenuation, scattered))
-            return color(0, 0, 0);
+            return color_from_emission;
 
-        return attenuation * ray_color(scattered, depth - 1, world);
+        return color_from_emission + attenuation * ray_color(scattered, depth - 1, world);
     }
     ray get_ray(int i, int j) const
     {
