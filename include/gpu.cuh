@@ -308,4 +308,113 @@ __device__ inline bool hit_triangle(const gprim& tri, const gray& r, float t_min
     return true;
 }
 
+__device__ inline bool hit_node_bounds(const gbvh_node& n, const gpoint3& orig,
+                                       const gvec3& inv, float t_min, float t_max) {
+    float t0 = (n.bmin.x() - orig.x()) * inv.x();
+    float t1 = (n.bmax.x() - orig.x()) * inv.x();
+    t_min = fmaxf(t_min, fminf(t0, t1));
+    t_max = fminf(t_max, fmaxf(t0, t1));
+
+    t0 = (n.bmin.y() - orig.y()) * inv.y();
+    t1 = (n.bmax.y() - orig.y()) * inv.y();
+    t_min = fmaxf(t_min, fminf(t0, t1));
+    t_max = fminf(t_max, fmaxf(t0, t1));
+
+    t0 = (n.bmin.z() - orig.z()) * inv.z();
+    t1 = (n.bmax.z() - orig.z()) * inv.z();
+    t_min = fmaxf(t_min, fminf(t0, t1));
+    t_max = fminf(t_max, fmaxf(t0, t1));
+
+    return t_max > t_min;
+}
+
+// no recursion on the device so we carry our own stack. 32 is plenty, the
+// split is median so the tree stays balanced
+__device__ inline bool hit_scene(const gscene& scene, const gray& r, float t_min, float t_max,
+                                 ghit_record& rec) {
+    const int max_stack = 32;
+    gvec3 inv(1.0f / r.direction().x(), 1.0f / r.direction().y(), 1.0f / r.direction().z());
+
+    int stack[max_stack];
+    int sp = 0;
+    stack[sp++] = 0;
+
+    bool got_one = false;
+    ghit_record temp;
+
+    while (sp > 0) {
+        int idx = stack[--sp];
+        const gbvh_node& node = scene.nodes[idx];
+
+        if (!hit_node_bounds(node, r.origin(), inv, t_min, t_max))
+            continue;
+
+        if (node.count > 0) {
+            for (int i = 0; i < node.count; i++) {
+                const gprim& p = scene.prims[node.offset + i];
+                bool hit = (p.type == PRIM_SPHERE) ? hit_sphere(p, r, t_min, t_max, temp)
+                         : (p.type == PRIM_TRIANGLE) ? hit_triangle(p, r, t_min, t_max, temp)
+                                                     : hit_box(p, r, t_min, t_max, temp);
+                if (hit) {
+                    got_one = true;
+                    t_max = temp.t;
+                    rec = temp;
+                }
+            }
+        } else if (sp + 2 <= max_stack) {
+            stack[sp++] = node.offset;
+            stack[sp++] = idx + 1;
+        }
+    }
+
+    return got_one;
+}
+
+// schlick
+__device__ inline float reflectance(float cosine, float ri) {
+    float r0 = (1.0f - ri) / (1.0f + ri);
+    r0 = r0*r0;
+    return r0 + (1.0f - r0)*powf(1.0f - cosine, 5.0f);
+}
+
+__device__ inline gcolor emitted(const gmaterial& m) {
+    return m.type == MAT_DIFFUSE_LIGHT ? m.albedo : gcolor(0,0,0);
+}
+
+__device__ inline bool scatter(const gmaterial& m, const gray& r_in, const ghit_record& rec,
+                               gcolor& attenuation, gray& scattered, rng_state& rng) {
+    if (m.type == MAT_DIFFUSE_LIGHT) return false;   // path stops here
+
+    if (m.type == MAT_LAMBERTIAN) {
+        gvec3 dir = rec.normal + random_unit_vector(rng);
+        if (dir.near_zero()) dir = rec.normal;
+        scattered = gray(rec.p, dir);
+        attenuation = m.albedo;
+        return true;
+    }
+
+    if (m.type == MAT_METAL) {
+        gvec3 reflected = reflect(r_in.direction(), rec.normal);
+        reflected = unit_vector(reflected) + m.fuzz*random_unit_vector(rng);
+        scattered = gray(rec.p, reflected);
+        attenuation = m.albedo;
+        return dot(scattered.direction(), rec.normal) > 0.0f;
+    }
+
+    attenuation = gcolor(1,1,1);
+    float ri = rec.front_face ? (1.0f / m.refraction_index) : m.refraction_index;
+
+    gvec3 unit_dir = unit_vector(r_in.direction());
+    float ct = fminf(dot(-unit_dir, rec.normal), 1.0f);
+    float st = sqrtf(fmaxf(0.0f, 1.0f - ct*ct));
+
+    bool stuck = ri*st > 1.0f;
+    gvec3 dir = (stuck || reflectance(ct, ri) > random_float(rng))
+              ? reflect(unit_dir, rec.normal)
+              : refract(unit_dir, rec.normal, ri);
+
+    scattered = gray(rec.p, dir);
+    return true;
+}
+
 #endif
