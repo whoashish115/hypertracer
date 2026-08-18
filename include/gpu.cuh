@@ -543,4 +543,124 @@ class bvh_builder {
     }
 };
 
+struct scene_data {
+    std::vector<gprim> prims;
+    std::vector<gmaterial> mats;
+
+    int lambertian(const gcolor& albedo) {
+        mats.push_back(gmaterial{MAT_LAMBERTIAN, albedo, 0.0f, 0.0f});
+        return int(mats.size()) - 1;
+    }
+    int metal(const gcolor& albedo, float fuzz) {
+        mats.push_back(gmaterial{MAT_METAL, albedo, fuzz < 1.0f ? fuzz : 1.0f, 0.0f});
+        return int(mats.size()) - 1;
+    }
+    int glass(float ior) {
+        mats.push_back(gmaterial{MAT_DIELECTRIC, gcolor(1,1,1), 0.0f, ior});
+        return int(mats.size()) - 1;
+    }
+    int light(const gcolor& emit) {
+        mats.push_back(gmaterial{MAT_DIFFUSE_LIGHT, emit, 0.0f, 0.0f});
+        return int(mats.size()) - 1;
+    }
+
+    void sphere(const gpoint3& center, float radius, int mat) {
+        gprim p{};
+        p.type = PRIM_SPHERE;
+        p.mat = mat;
+        p.center = center;
+        p.half = gvec3(radius, radius, radius);
+        p.cos_theta = 1.0f;
+        prims.push_back(p);
+    }
+
+    void box(const gpoint3& center, const gvec3& size, int mat, float angle_y = 0.0f) {
+        float rad = degrees_to_radians(angle_y);
+        gprim p{};
+        p.type = PRIM_BOX;
+        p.mat = mat;
+        p.center = center;
+        p.half = gvec3(size.x()/2, size.y()/2, size.z()/2);
+        p.sin_theta = sinf(rad);
+        p.cos_theta = cosf(rad);
+        prims.push_back(p);
+    }
+
+    void cube(const gpoint3& center, float side, int mat, float angle_y = 0.0f) {
+        box(center, gvec3(side, side, side), mat, angle_y);
+    }
+
+    void triangle(const gpoint3& a, const gpoint3& b, const gpoint3& c, int mat) {
+        gprim p{};
+        p.type = PRIM_TRIANGLE;
+        p.mat = mat;
+        p.center = a;
+        p.half = b - a;
+        p.extra = c - a;
+        p.cos_theta = 1.0f;
+        prims.push_back(p);
+    }
+
+    void quad(const gpoint3& a, const gpoint3& b, const gpoint3& c, const gpoint3& d, int mat) {
+        triangle(a, b, c, mat);
+        triangle(a, c, d, mat);
+    }
+
+    void ground(const gvec3& extent, int mat) {
+        box(gpoint3(0, -extent.y()/2, 0), extent, mat);
+    }
+
+    void pyramid(const gpoint3& base_center, float base, float height, int mat,
+                 float angle_y = 0.0f) {
+        float r = base / 2;
+        float s = sinf(degrees_to_radians(angle_y));
+        float k = cosf(degrees_to_radians(angle_y));
+        auto corner = [&](float x, float z) {
+            return base_center + gpoint3(k*x + s*z, 0.0f, -s*x + k*z);
+        };
+        gpoint3 a = corner(-r, -r), b = corner(r, -r);
+        gpoint3 c = corner(r, r), e = corner(-r, r);
+        gpoint3 apex = base_center + gpoint3(0, height, 0);
+
+        triangle(a, b, apex, mat);
+        triangle(b, c, apex, mat);
+        triangle(c, e, apex, mat);
+        triangle(e, a, apex, mat);
+        quad(e, c, b, a, mat);
+    }
+
+    // sides = 3 gives a triangular column, 6 a hex one etc
+    void prism(const gpoint3& base_center, float radius, float height, int sides, int mat,
+               float twist = 0.0f) {
+        if (sides < 3) sides = 3;
+        float off = degrees_to_radians(twist);
+        gpoint3 top_center = base_center + gpoint3(0, height, 0);
+
+        for (int i = 0; i < sides; i++) {
+            float a0 = off + (i / float(sides)) * 2.0f*GPU_PI;
+            float a1 = off + ((i + 1) / float(sides)) * 2.0f*GPU_PI;
+
+            gpoint3 b0 = base_center + gpoint3(radius*cosf(a0), 0, radius*sinf(a0));
+            gpoint3 b1 = base_center + gpoint3(radius*cosf(a1), 0, radius*sinf(a1));
+            gpoint3 t0 = b0 + gpoint3(0, height, 0);
+            gpoint3 t1 = b1 + gpoint3(0, height, 0);
+
+            quad(b0, b1, t1, t0, mat);
+            triangle(top_center, t0, t1, mat);
+            triangle(base_center, b1, b0, mat);
+        }
+    }
+};
+
+struct scene_desc {
+    std::string name;
+    scene_data data;
+    sky_gradient sky;
+    gpoint3 lookfrom = gpoint3(0, 5, 15);
+    gpoint3 lookat = gpoint3(0, 0, 0);
+    float vfov = 40.0f;
+    float focus_dist = 15.0f;
+    float defocus_angle = 0.0f;
+};
+
 #endif
