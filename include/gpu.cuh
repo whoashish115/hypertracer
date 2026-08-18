@@ -417,4 +417,130 @@ __device__ inline bool scatter(const gmaterial& m, const gray& r_in, const ghit_
     return true;
 }
 
+struct prim_bounds {
+    gvec3 lo, hi;
+};
+
+inline prim_bounds bounds_of(const gprim& p) {
+    prim_bounds b;
+    if (p.type == PRIM_SPHERE) {
+        float r = p.half[0];
+        b.lo = p.center - gvec3(r, r, r);
+        b.hi = p.center + gvec3(r, r, r);
+    } else if (p.type == PRIM_TRIANGLE) {
+        gvec3 v1 = p.center + p.half;
+        gvec3 v2 = p.center + p.extra;
+        for (int a = 0; a < 3; a++) {
+            b.lo[a] = std::fmin(p.center[a], std::fmin(v1[a], v2[a]));
+            b.hi[a] = std::fmax(p.center[a], std::fmax(v1[a], v2[a]));
+        }
+    } else {
+        b.lo = gvec3( GPU_INF, GPU_INF, GPU_INF);
+        b.hi = gvec3(-GPU_INF, -GPU_INF, -GPU_INF);
+        for (int i = 0; i < 8; i++) {
+            gvec3 c((i & 1) ? p.half[0] : -p.half[0],
+                    (i & 2) ? p.half[1] : -p.half[1],
+                    (i & 4) ? p.half[2] : -p.half[2]);
+            gvec3 w(p.cos_theta*c.x() + p.sin_theta*c.z(), c.y(),
+                    -p.sin_theta*c.x() + p.cos_theta*c.z());
+            gvec3 q = p.center + w;
+            for (int a = 0; a < 3; a++) {
+                b.lo[a] = std::fmin(b.lo[a], q[a]);
+                b.hi[a] = std::fmax(b.hi[a], q[a]);
+            }
+        }
+    }
+    // flat stuff needs some thickness or the slab test never hits it
+    for (int a = 0; a < 3; a++) {
+        if (b.hi[a] - b.lo[a] < 1e-4f) { b.lo[a] -= 5e-5f; b.hi[a] += 5e-5f; }
+    }
+    return b;
+}
+
+// median split on the widest axis. built once on the host so nothing fancy,
+// traversal is what costs us not the build
+class bvh_builder {
+  public:
+    static const int leaf_size = 4;
+
+    bvh_builder(std::vector<gprim>& prims) : prims(prims) {
+        bounds.reserve(prims.size());
+        for (size_t i = 0; i < prims.size(); i++) bounds.push_back(bounds_of(prims[i]));
+
+        order.resize(prims.size());
+        for (size_t i = 0; i < order.size(); i++) order[i] = int(i);
+
+        nodes.reserve(2*prims.size());
+        build(0, int(prims.size()));
+
+        std::vector<gprim> sorted;
+        sorted.reserve(prims.size());
+        for (size_t i = 0; i < order.size(); i++) sorted.push_back(prims[order[i]]);
+        prims.swap(sorted);
+    }
+
+    std::vector<gbvh_node> nodes;
+
+  private:
+    std::vector<gprim>& prims;
+    std::vector<prim_bounds> bounds;
+    std::vector<int> order;
+
+    int build(int start, int end) {
+        int me = int(nodes.size());
+        nodes.push_back(gbvh_node());
+
+        gvec3 lo( GPU_INF, GPU_INF, GPU_INF);
+        gvec3 hi(-GPU_INF, -GPU_INF, -GPU_INF);
+        gvec3 clo( GPU_INF, GPU_INF, GPU_INF);
+        gvec3 chi(-GPU_INF, -GPU_INF, -GPU_INF);
+        for (int i = start; i < end; i++) {
+            const prim_bounds& b = bounds[order[i]];
+            for (int a = 0; a < 3; a++) {
+                lo[a] = std::fmin(lo[a], b.lo[a]);
+                hi[a] = std::fmax(hi[a], b.hi[a]);
+                float c = 0.5f*(b.lo[a] + b.hi[a]);
+                clo[a] = std::fmin(clo[a], c);
+                chi[a] = std::fmax(chi[a], c);
+            }
+        }
+
+        nodes[me].bmin = lo;
+        nodes[me].bmax = hi;
+
+        int count = end - start;
+        if (count <= leaf_size) {
+            nodes[me].offset = start;
+            nodes[me].count = count;
+            return me;
+        }
+
+        int axis = 0;
+        float extent = chi[0] - clo[0];
+        if (chi[1] - clo[1] > extent) { axis = 1; extent = chi[1] - clo[1]; }
+        if (chi[2] - clo[2] > extent) { axis = 2; extent = chi[2] - clo[2]; }
+
+        if (extent <= 0.0f) {
+            // every centroid in the same spot, nothing to split on
+            nodes[me].offset = start;
+            nodes[me].count = count;
+            return me;
+        }
+
+        int mid = start + count/2;
+        const std::vector<prim_bounds>& bb = bounds;
+        std::nth_element(order.begin() + start, order.begin() + mid, order.begin() + end,
+                         [&bb, axis](int a, int b) {
+                             return bb[a].lo[axis] + bb[a].hi[axis]
+                                  < bb[b].lo[axis] + bb[b].hi[axis];
+                         });
+
+        build(start, mid);
+        int right = build(mid, end);
+        nodes[me].offset = right;
+        nodes[me].count = 0;
+        return me;
+    }
+};
+
 #endif
