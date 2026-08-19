@@ -663,4 +663,141 @@ struct scene_desc {
     float defocus_angle = 0.0f;
 };
 
+struct gcamera {
+    int image_width = 800;
+    int image_height = 450;
+    int samples_per_pixel = 1;
+    int max_depth = 30;
+
+    gpoint3 center;
+    gpoint3 pixel00_loc;
+    gvec3 pixel_delta_u;
+    gvec3 pixel_delta_v;
+    gvec3 defocus_disk_u;
+    gvec3 defocus_disk_v;
+    float defocus_angle = 0.0f;
+
+    sky_gradient sky;
+
+    void initialize(float aspect, float vfov, const gpoint3& lookfrom,
+                    const gpoint3& lookat, const gvec3& vup, float focus_dist,
+                    float defocus_deg) {
+        image_height = int(image_width / aspect);
+        if (image_height < 1) image_height = 1;
+
+        center = lookfrom;
+        defocus_angle = defocus_deg;
+
+        float h = tanf(degrees_to_radians(vfov) / 2.0f);
+        float vp_h = 2.0f * h * focus_dist;
+        float vp_w = vp_h * (float(image_width) / image_height);
+
+        gvec3 w = unit_vector(lookfrom - lookat);
+        gvec3 u = unit_vector(cross(vup, w));
+        gvec3 v = cross(w, u);
+
+        gvec3 vp_u = vp_w * u;
+        gvec3 vp_v = vp_h * -v;
+
+        pixel_delta_u = vp_u / float(image_width);
+        pixel_delta_v = vp_v / float(image_height);
+
+        gvec3 upper_left = center - (focus_dist * w) - vp_u/2.0f - vp_v/2.0f;
+        pixel00_loc = upper_left + 0.5f * (pixel_delta_u + pixel_delta_v);
+
+        float dr = focus_dist * tanf(degrees_to_radians(defocus_angle / 2.0f));
+        defocus_disk_u = u * dr;
+        defocus_disk_v = v * dr;
+    }
+
+    __device__ gray get_ray(int i, int j, rng_state& rng) const {
+        float ox = random_float(rng) - 0.5f;
+        float oy = random_float(rng) - 0.5f;
+        gpoint3 sample = pixel00_loc + ((i + ox) * pixel_delta_u) + ((j + oy) * pixel_delta_v);
+
+        gpoint3 origin = center;
+        if (defocus_angle > 0.0f) {
+            gvec3 p = random_in_unit_disk(rng);
+            origin = center + (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+        }
+
+        return gray(origin, sample - origin);
+    }
+};
+
+// cpu side recurses, here its a loop carrying a throughput. same sum, just
+// unrolled, and it keeps us off the tiny device stack
+__device__ inline gcolor ray_color(gray r, int max_depth, const gscene& scene,
+                                   const sky_gradient& sky, rng_state& rng) {
+    gcolor radiance(0,0,0);
+    gcolor throughput(1,1,1);
+
+    for (int depth = 0; depth < max_depth; depth++) {
+        ghit_record rec;
+        if (!hit_scene(scene, r, 0.001f, GPU_INF, rec)) {
+            radiance += throughput * sky.sample(r.direction());
+            return radiance;
+        }
+
+        const gmaterial& m = scene.mats[rec.mat];
+        radiance += throughput * emitted(m);
+
+        gcolor attenuation;
+        gray scattered;
+        if (!scatter(m, r, rec, attenuation, scattered, rng))
+            return radiance;
+
+        throughput *= attenuation;
+        r = scattered;
+
+        // roulette. dim paths arent worth more bounces, survivers get scaled
+        // back up so the average doesnt shift
+        if (depth >= 4) {
+            float p = fminf(fmaxf(throughput[0], fmaxf(throughput[1], throughput[2])), 0.95f);
+            if (random_float(rng) > p) return radiance;
+            throughput *= 1.0f / p;
+        }
+    }
+
+    return radiance;
+}
+
+__global__ inline void render_kernel(gcolor* framebuffer, gcamera cam, gscene scene,
+                                     unsigned long long seed) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= cam.image_width || j >= cam.image_height) return;
+
+    int px = j * cam.image_width + i;
+
+    rng_state rng;
+    curand_init(seed, px, 0, &rng);
+
+    gcolor sum(0,0,0);
+    for (int s = 0; s < cam.samples_per_pixel; s++)
+        sum += ray_color(cam.get_ray(i, j, rng), cam.max_depth, scene, cam.sky, rng);
+
+    framebuffer[px] += sum;   // raw sums, host divides at the end
+}
+
+__global__ inline void resolve_kernel(const gcolor* accum, unsigned int* out,
+                                      int width, int height, float inv_samples) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= width || j >= height) return;
+
+    int idx = j * width + i;
+    gcolor c = accum[idx] * inv_samples;
+
+    float r = c.x() > 0.0f ? sqrtf(c.x()) : 0.0f;
+    float g = c.y() > 0.0f ? sqrtf(c.y()) : 0.0f;
+    float b = c.z() > 0.0f ? sqrtf(c.z()) : 0.0f;
+
+    unsigned int rb = (unsigned int)(255.0f * fminf(r, 1.0f));
+    unsigned int gb = (unsigned int)(255.0f * fminf(g, 1.0f));
+    unsigned int bb = (unsigned int)(255.0f * fminf(b, 1.0f));
+
+    out[idx] = (rb << 16) | (gb << 8) | bb;
+}
+
 #endif
