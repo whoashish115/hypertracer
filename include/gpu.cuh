@@ -800,4 +800,108 @@ __global__ inline void resolve_kernel(const gcolor* accum, unsigned int* out,
     out[idx] = (rb << 16) | (gb << 8) | bb;
 }
 
+struct gpu_scene {
+    gprim* prims = nullptr;
+    gmaterial* mats = nullptr;
+    gbvh_node* nodes = nullptr;
+    int prim_count = 0;
+    int node_count = 0;
+
+    gscene view() const {
+        gscene s;
+        s.prims = prims;
+        s.mats = mats;
+        s.nodes = nodes;
+        s.prim_count = prim_count;
+        s.node_count = node_count;
+        return s;
+    }
+
+    void release() {
+        if (prims) cudaFree(prims);
+        if (mats) cudaFree(mats);
+        if (nodes) cudaFree(nodes);
+        prims = nullptr; mats = nullptr; nodes = nullptr;
+    }
+};
+
+inline gpu_scene upload_scene(scene_data& host) {
+    bvh_builder bvh(host.prims);   // reorders host.prims, thats why its a ref
+
+    gpu_scene g;
+    g.prim_count = int(host.prims.size());
+    g.node_count = int(bvh.nodes.size());
+
+    CUDA_CHECK(cudaMalloc(&g.prims, host.prims.size() * sizeof(gprim)));
+    CUDA_CHECK(cudaMalloc(&g.mats, host.mats.size() * sizeof(gmaterial)));
+    CUDA_CHECK(cudaMalloc(&g.nodes, bvh.nodes.size() * sizeof(gbvh_node)));
+
+    CUDA_CHECK(cudaMemcpy(g.prims, host.prims.data(),
+                          host.prims.size() * sizeof(gprim), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(g.mats, host.mats.data(),
+                          host.mats.size() * sizeof(gmaterial), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(g.nodes, bvh.nodes.data(),
+                          bvh.nodes.size() * sizeof(gbvh_node), cudaMemcpyHostToDevice));
+    return g;
+}
+
+inline gcamera camera_for(const scene_desc& desc, int width, int height, int spp, int depth) {
+    gcamera cam;
+    cam.image_width = width;
+    cam.samples_per_pixel = spp;
+    cam.max_depth = depth;
+    cam.sky = desc.sky;
+    cam.initialize(float(width) / float(height), desc.vfov, desc.lookfrom, desc.lookat,
+                   gvec3(0, 1, 0), desc.focus_dist, desc.defocus_angle);
+    cam.image_height = height;
+    return cam;
+}
+
+// short launches, windows resets the gpu if one kernel runs too long
+inline std::vector<unsigned int> render_image(
+        const scene_desc& desc, const gpu_scene& scene,
+        int width, int height, int samples, int depth,
+        const std::function<void(int, int)>& on_progress = nullptr) {
+
+    const int pixels = width * height;
+    const int per_launch = 16;
+
+    gcolor* accum = nullptr;
+    unsigned int* out = nullptr;
+    CUDA_CHECK(cudaMalloc(&accum, size_t(pixels) * sizeof(gcolor)));
+    CUDA_CHECK(cudaMalloc(&out, size_t(pixels) * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMemset(accum, 0, size_t(pixels) * sizeof(gcolor)));
+
+    gcamera cam = camera_for(desc, width, height, per_launch, depth);
+    gscene view = scene.view();
+
+    dim3 block(8, 8);
+    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+
+    int done = 0;
+    for (int launch = 0; done < samples; launch++) {
+        int batch = samples - done;
+        if (batch > per_launch) batch = per_launch;
+        cam.samples_per_pixel = batch;
+
+        render_kernel<<<grid, block>>>(accum, cam, view, 0x9E3779B97F4A7C15ull);
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        done += batch;
+        if (on_progress) on_progress(done, samples);
+    }
+
+    resolve_kernel<<<grid, block>>>(accum, out, width, height, 1.0f / float(samples));
+    CUDA_CHECK(cudaGetLastError());
+
+    std::vector<unsigned int> image(pixels);
+    CUDA_CHECK(cudaMemcpy(image.data(), out, size_t(pixels) * sizeof(unsigned int),
+                          cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(accum));
+    CUDA_CHECK(cudaFree(out));
+    return image;
+}
+
 #endif
