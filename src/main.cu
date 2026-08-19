@@ -1,4 +1,5 @@
 #include "gpu.cuh"
+#include "image_io.h"
 
 #include <iostream>
 
@@ -23,12 +24,8 @@ int main() {
     const int height = 270;
     auto image = render_image(s, g, width, height, 100, 20);
 
-    std::cout << "P3\n" << width << ' ' << height << "\n255\n";
-    for (int i = 0; i < width*height; i++) {
-        unsigned int p = image[i];
-        std::cout << ((p >> 16) & 0xFF) << ' ' << ((p >> 8) & 0xFF) << ' '
-                  << (p & 0xFF) << '\n';
-    }
+    write_ppm(std::cout, image, width, height);
+    write_bmp("output/render.bmp", image, width, height);
 
     g.release();
     return 0;
