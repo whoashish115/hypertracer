@@ -1,5 +1,6 @@
 #include "gpu.cuh"
 #include "image_io.h"
+#include "paths.h"
 
 #include <iostream>
 
@@ -25,7 +26,7 @@ int main() {
     auto image = render_image(s, g, width, height, 100, 20);
 
     write_ppm(std::cout, image, width, height);
-    write_bmp("output/render.bmp", image, width, height);
+    write_bmp(paths::in_output(paths::still_image, ".bmp"), image, width, height);
 
     g.release();
     return 0;
