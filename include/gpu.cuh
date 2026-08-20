@@ -884,7 +884,9 @@ inline std::vector<unsigned int> render_image(
         if (batch > per_launch) batch = per_launch;
         cam.samples_per_pixel = batch;
 
-        render_kernel<<<grid, block>>>(accum, cam, view, 0x9E3779B97F4A7C15ull);
+        render_kernel<<<grid, block>>>(accum, cam, view,
+                                       0x9E3779B97F4A7C15ull
+                                         + (unsigned long long)launch * 1315423911ull);
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
 
