@@ -34,7 +34,7 @@ inline bool write_bmp(const std::string& path, const std::vector<unsigned int>& 
     out.put('B'); out.put('M');
     u32(offset + pixel_bytes); u16(0); u16(0); u32(offset);
 
-    u32(40); i32(width); i32(height);
+    u32(40); i32(width); i32(-height);
     u16(1); u16(32); u32(0); u32(pixel_bytes);
     i32(2835); i32(2835); u32(0); u32(0);
 
