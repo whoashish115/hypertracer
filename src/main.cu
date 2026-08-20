@@ -1,33 +1,66 @@
-#include "gpu.cuh"
+// usage: hypertracer_cuda [scene] [width] [samples]
+// writes a ppm on stdout and drops a bmp in output/
+
+#include "scenes/all.cuh"
 #include "image_io.h"
 #include "paths.h"
 
+#include <chrono>
+#include <cstdlib>
 #include <iostream>
 
-int main() {
-    scene_desc s;
-    s.name = "test";
-    s.sky = sky_gradient(gcolor(1, 1, 1), gcolor(0.5f, 0.7f, 1.0f));
-    s.lookfrom = gpoint3(0, 2, 6);
-    s.lookat = gpoint3(0, 0.5f, 0);
-    s.vfov = 40.0f;
-    s.focus_dist = 6.0f;
+int main(int argc, char** argv) {
+    int scene_index = (argc > 1) ? std::atoi(argv[1]) - 1 : 0;
+    int width = (argc > 2) ? std::atoi(argv[2]) : 1280;
+    int samples = (argc > 3) ? std::atoi(argv[3]) : 2000;
 
-    scene_data& d = s.data;
-    d.ground(gvec3(200, 2, 200), d.lambertian(gcolor(0.5f, 0.5f, 0.5f)));
-    d.sphere(gpoint3(0, 1, 0), 1.0f, d.metal(gcolor(0.7f, 0.6f, 0.5f), 0.0f));
-    d.cube(gpoint3(-2.4f, 0.75f, 0), 1.5f, d.lambertian(gcolor(0.8f, 0.2f, 0.2f)), 25.0f);
-    d.sphere(gpoint3(2.2f, 0.8f, 0), 0.8f, d.glass(1.5f));
+    if (scene_index < 0 || scene_index >= scene_count) {
+        std::cerr << "Scene must be 1.." << scene_count << "\n";
+        return 1;
+    }
+    if (width < 16) width = 16;
+    if (samples < 1) samples = 1;
 
-    gpu_scene g = upload_scene(d);
+    const int height = int(width * 9.0f / 16.0f);
 
-    const int width = 480;
-    const int height = 270;
-    auto image = render_image(s, g, width, height, 100, 20);
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (device_count == 0) {
+        std::cerr << "No CUDA device found.\n";
+        return 1;
+    }
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+
+    scene_desc desc = build_scene(scene_index);
+    gpu_scene scene = upload_scene(desc.data);
+
+    std::cerr << "Device: " << prop.name << " (sm_" << prop.major << prop.minor << ")\n"
+              << "Scene " << (scene_index + 1) << ": " << desc.name << "  --  "
+              << scene.prim_count << " primitives, " << scene.node_count << " BVH nodes\n"
+              << "Rendering " << width << "x" << height << " at " << samples << " spp\n";
+
+    auto start = std::chrono::steady_clock::now();
+
+    auto image = render_image(desc, scene, width, height, samples, 30,
+                              [&](int done, int total) {
+                                  std::cerr << "\r  " << done << " / " << total << " spp   "
+                                            << std::flush;
+                              });
+
+    double elapsed = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - start).count();
+    std::cerr << "\r  done in " << elapsed << " s\n";
 
     write_ppm(std::cout, image, width, height);
-    write_bmp(paths::in_output(paths::still_image, ".bmp"), image, width, height);
 
-    g.release();
+    std::string bmp = paths::in_output(paths::still_image + "_" + scene_slug(desc), ".bmp");
+    if (write_bmp(bmp, image, width, height))
+        std::cerr << "Wrote " << bmp << "\n";
+    else
+        std::cerr << "Could not write " << bmp << " (does " << paths::output_dir
+                  << "/ exist?)\n";
+
+    scene.release();
     return 0;
 }
