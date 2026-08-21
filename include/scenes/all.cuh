@@ -4,12 +4,14 @@
 #include "helpers.cuh"
 
 #include "cube_mountain.cuh"
+#include "sphere_pit.cuh"
 
-const int scene_count = 1;
+const int scene_count = 2;
 
 inline scene_desc build_scene(int index) {
     switch (index) {
-        default: return scene_cube_mountain();
+        case 0: return scene_cube_mountain();
+        default: return scene_sphere_pit();
     }
 }
 
