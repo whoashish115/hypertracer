@@ -9,7 +9,7 @@ inline scene_desc scene_moss_mountain() {
     s.name = "Moss Mountain";
     scene_data& d = s.data;
 
-    d.ground(gvec3(600, 2, 600), d.lambertian(gcolor(0.34f, 0.34f, 0.34f)));
+    d.ground(gvec3(1400, 2, 1400), d.lambertian(gcolor(0.34f, 0.34f, 0.34f)));
 
     auto moss = [&](float k) {
         gcolor deep (0.05f, 0.19f, 0.06f);
@@ -30,16 +30,16 @@ inline scene_desc scene_moss_mountain() {
 
     // spread them down the band infront of the cam so the range recedes
     for (int i = 0; i < 12; i++) {
-        peaks[i].x = rnd(-40.0f, 40.0f);
-        peaks[i].z = rnd(-60.0f, 10.0f);
-        peaks[i].height = rnd(11.0f, 26.0f);
-        peaks[i].spread = rnd(5.0f, 9.5f);
+        peaks[i].x = rnd(-150.0f, 150.0f);
+        peaks[i].z = rnd(-240.0f, 30.0f);
+        peaks[i].height = rnd(20.0f, 46.0f);
+        peaks[i].spread = rnd(12.0f, 24.0f);
     }
 
-    const int x_reach = 46;
-    const int z_near = 40;
-    const int z_far = -60;
-    const gpoint3 eye(0.0f, 8.0f, 56.0f);
+    const int x_reach = 175;
+    const int z_near = 100;
+    const int z_far = -420;
+    const gpoint3 eye(0.0f, 22.0f, 88.0f);
 
     for (int x = -x_reach; x <= x_reach; x++) {
         for (int z = z_far; z <= z_near; z++) {
@@ -97,6 +97,25 @@ inline scene_desc scene_moss_mountain() {
                       mat, lean);
                 y += tall;
             }
+
+            // floaters. thick near the ground, thin out fast going up.
+            // near cells only, further out they just read as haze
+            float ceiling = column + 22.0f;
+            for (float fy = column + rnd(0.8f, 2.0f); step == 1 && fy < ceiling;
+                 fy += rnd(1.2f, 3.2f)) {
+                float above = fy - column;
+                if (!chance(0.16f * std::exp(-above / 4.5f))) continue;
+
+                float size = rnd(0.22f, 0.55f) * cell;
+                gcolor tone = moss(rnd());
+                int mat = chance(0.08f) ? d.light(tone * 4.0f)
+                        : chance(0.15f) ? d.glass(1.5f)
+                        : chance(0.4f) ? d.metal(tone, rnd(0.10f, 0.45f))
+                                        : d.lambertian(tone);
+
+                d.box(gpoint3(fx + rnd(-0.35f, 0.35f)*cell, fy, fz + rnd(-0.35f, 0.35f)*cell),
+                      gvec3(size, size * rnd(0.6f, 1.5f), size), mat, rnd(0.0f, 90.0f));
+            }
         }
     }
 
@@ -106,9 +125,9 @@ inline scene_desc scene_moss_mountain() {
 
     s.sky = sky_gradient(gcolor(0.72f, 0.72f, 0.72f));
     s.lookfrom = eye;
-    s.lookat = gpoint3(0, 13, -10);
-    s.vfov = 52.0f;
-    s.focus_dist = 66.0f;
+    s.lookat = gpoint3(0, 24, -70);
+    s.vfov = 66.0f;
+    s.focus_dist = 130.0f;
     s.defocus_angle = 0.0f;
     return s;
 }
