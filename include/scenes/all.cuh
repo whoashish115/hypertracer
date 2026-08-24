@@ -8,8 +8,9 @@
 #include "moss_mountain.cuh"
 #include "cornell_heap.cuh"
 #include "crystal_cavern.cuh"
+#include "ice_lake.cuh"
 
-const int scene_count = 5;
+const int scene_count = 6;
 
 inline scene_desc build_scene(int index) {
     switch (index) {
@@ -17,7 +18,8 @@ inline scene_desc build_scene(int index) {
         case 1: return scene_sphere_pit();
         case 2: return scene_moss_mountain();
         case 3: return scene_cornell_heap();
-        default: return scene_crystal_cavern();
+        case 4: return scene_crystal_cavern();
+        default: return scene_ice_lake();
     }
 }
 
