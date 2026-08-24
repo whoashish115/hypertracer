@@ -29,23 +29,45 @@ inline scene_desc scene_cornell_heap() {
     d.box(gpoint3(0, room - 0.7f, 0), gvec3(10.0f, 0.4f, 10.0f),
           d.light(gcolor(14.0f, 12.6f, 10.5f)));
 
-    for (int i = 0; i < 420; i++) {
-        float side = rnd(1.0f, 2.4f);
-        float x = rnd(-half + 2.0f, half - 2.0f);
-        float z = rnd(-half + 2.0f, half - 6.0f);
-        float lean = std::max(0.0f, 1.0f - (std::fabs(x + 5.0f) + std::fabs(z + 4.0f)) / 22.0f);
-        float top = side + 12.0f * lean;
-        float y = rnd(side/2, std::max(side/2, top));
+    // packed tight but still checked in 3d. radius sits between the inradius
+    // and the corner so they nestle without growing through eachother
+    struct blob { gpoint3 c; float r; };
+    std::vector<blob> pile;
 
-        gcolor col = chance(0.4f) ? gcolor(0.73f, 0.72f, 0.70f)
-                                  : bold_palette(rnd_int(0, 7));
-        float roll = rnd();
-        int mat;
-        if (roll < 0.10f)      mat = d.glass(1.5f);
-        else if (roll < 0.30f) mat = d.metal(col, rnd(0.0f, 0.25f));
-        else                   mat = d.lambertian(col);
+    for (int i = 0; i < 9000 && pile.size() < 620; i++) {
+        float side = rnd(0.8f, 2.0f);
+        float r = side * 0.60f;
 
-        drop_shape(d, gpoint3(x, y, z), side, mat, 0.42f);
+        for (int tries = 0; tries < 60; tries++) {
+            float x = rnd(-half + wall + r, half - wall - r);
+            float z = rnd(-half + wall + r, half - 6.0f);
+            float lean = std::max(0.0f, 1.0f - (std::fabs(x + 5.0f) + std::fabs(z + 4.0f)) / 22.0f);
+            float top = r + 12.0f * lean;
+
+            float t = rnd();
+            float y = r + (std::max(r, top) - r) * t*t;   // bias low, stuff settles
+
+            gpoint3 c(x, y, z);
+            bool ok = true;
+            for (size_t j = 0; j < pile.size(); j++) {
+                float gap = r + pile[j].r + 0.02f;
+                if ((c - pile[j].c).length_squared() < gap*gap) { ok = false; break; }
+            }
+            if (!ok) continue;
+
+            pile.push_back(blob{c, r});
+
+            gcolor col = chance(0.4f) ? gcolor(0.73f, 0.72f, 0.70f)
+                                      : bold_palette(rnd_int(0, 7));
+            float roll = rnd();
+            int mat;
+            if (roll < 0.10f) mat = d.glass(1.5f);
+            else if (roll < 0.30f) mat = d.metal(col, rnd(0.0f, 0.25f));
+            else mat = d.lambertian(col);
+
+            drop_shape(d, c, side, mat, 0.42f);
+            break;
+        }
     }
 
     s.sky = sky_gradient(gcolor(0, 0, 0));
