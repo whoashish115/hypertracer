@@ -7,15 +7,17 @@
 #include "sphere_pit.cuh"
 #include "moss_mountain.cuh"
 #include "cornell_heap.cuh"
+#include "crystal_cavern.cuh"
 
-const int scene_count = 4;
+const int scene_count = 5;
 
 inline scene_desc build_scene(int index) {
     switch (index) {
         case 0: return scene_cube_mountain();
         case 1: return scene_sphere_pit();
         case 2: return scene_moss_mountain();
-        default: return scene_cornell_heap();
+        case 3: return scene_cornell_heap();
+        default: return scene_crystal_cavern();
     }
 }
 
