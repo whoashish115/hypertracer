@@ -1,7 +1,9 @@
 // arrows/WASD move, Q/E up down, drag to look, 1-6 scenes, [ ] cycle,
-// F reframe, esc quits
+// P photo, R full render, F reframe, esc quits
 
 #include "scenes/all.cuh"
+#include "image_io.h"
+#include "paths.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -55,6 +57,8 @@ static bool g_resized = false;
 
 static int g_pick_scene = -1;   // 0 based, -1 means nothing asked for
 static int g_step_scene = 0;
+static bool g_snapshot = false;
+static bool g_full_render= false;
 static bool g_reframe = false;
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -79,6 +83,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_pick_scene >= scene_count) g_pick_scene = -1;
             if (wp == VK_OEM_4) g_step_scene = -1;   // [
             if (wp == VK_OEM_6) g_step_scene = +1;   // ]
+            if (wp == 'P') g_snapshot = true;
+            if (wp == 'R') g_full_render = true;
             if (wp == 'F') g_reframe = true;
             return 0;
 
@@ -124,7 +130,19 @@ static void blit(HWND hwnd, const std::vector<unsigned int>& pixels, int src_w, 
 }
 
 // number them so saving twice doesnt clobber the first one
+static std::string next_free_path(const std::string& stem, const std::string& extension) {
+    for (int n = 1; n < 10000; n++) {
+        char name[256];
+        std::snprintf(name, sizeof(name), "%s_%03d", stem.c_str(), n);
+        std::string path = paths::in_output(name, extension);
+        if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES) return path;
+    }
+    return paths::in_output(stem, extension);
+}
+
 int main() {
+    CreateDirectoryA(paths::output_dir.c_str(), nullptr);
+
     int scene_index = 0;
     scene_desc desc = build_scene(scene_index);
     gpu_scene scene = upload_scene(desc.data);
@@ -176,6 +194,8 @@ int main() {
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&last);
 
+    std::string status;
+
     while (g_running) {
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -203,12 +223,12 @@ int main() {
             g_step_scene = 0;
         }
         if (wanted != scene_index) {
-            scene.release();
             scene_index = wanted;
             desc = build_scene(scene_index);
             scene = upload_scene(desc.data);
             fly.frame(desc);
             dirty = true;
+            status.clear();
         }
 
         if (g_reframe) {
@@ -289,6 +309,41 @@ int main() {
 
         blit(hwnd, frame, render_w, render_h);
 
+        if (g_snapshot) {
+            std::string path = next_free_path(paths::photo + "_" + scene_slug(desc), ".bmp");
+            if (write_bmp(path, frame, render_w, render_h))
+                status = "saved " + path + "  (" + std::to_string(accumulated) + " spp)";
+            else
+                status = "could not write " + path;
+            g_snapshot = false;
+        }
+
+        if (g_full_render) {
+            g_full_render = false;
+            const int out_w = 1920, out_h = 1080, out_spp = 3000;
+
+            SetWindowTextA(hwnd, "hypertracer  |  rendering...");
+            auto image = render_image(live, scene, out_w, out_h, out_spp, 40,
+                [&](int done, int total) {
+                    char t[160];
+                    std::snprintf(t, sizeof(t), "hypertracer  |  rendering %d / %d spp",
+                                  done, total);
+                    SetWindowTextA(hwnd, t);
+                    // keep pumping or windows decides weve hung
+                    MSG pump;
+                    while (PeekMessage(&pump, nullptr, 0, 0, PM_REMOVE)) {
+                        TranslateMessage(&pump);
+                        DispatchMessage(&pump);
+                    }
+                });
+
+            std::string path = next_free_path(paths::full_render + "_" + scene_slug(desc),
+                                              ".bmp");
+            status = write_bmp(path, image, out_w, out_h) ? "rendered " + path
+                                                          : "could not write " + path;
+            QueryPerformanceCounter(&last);   // that took ages, dont skew the pacing
+        }
+
         // aim each frame at ~30fps
         const double target = 0.033;   // aim for ~30fps
         int next = int(spp_per_frame * (target / (dt > 1e-6 ? dt : target)) + 0.5);
@@ -300,10 +355,12 @@ int main() {
         char title[512];
         std::snprintf(title, sizeof(title),
                       "hypertracer  |  [%d] %s  |  %d spp  |  %.0f fps  |  %d prims  |  "
-                      "%d/%d  1-%d or [ ] scene, WASD+QE move, drag look, F reframe",
+                      "%d/%d  1-%d or [ ] scene, WASD+QE move, drag look, "
+                      "P photo, R render, F reframe%s%s",
                       scene_index + 1, desc.name.c_str(), accumulated,
                       dt > 0 ? 1.0/dt : 0.0, scene.prim_count,
-                      scene_index + 1, scene_count, scene_count);
+                      scene_index + 1, scene_count, scene_count,
+                      status.empty() ? "" : "  |  ", status.c_str());
         SetWindowTextA(hwnd, title);
     }
 
