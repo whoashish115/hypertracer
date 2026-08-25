@@ -223,6 +223,7 @@ int main() {
             g_step_scene = 0;
         }
         if (wanted != scene_index) {
+            scene.release();
             scene_index = wanted;
             desc = build_scene(scene_index);
             scene = upload_scene(desc.data);
