@@ -44,6 +44,11 @@ if(CMAKE_CUDA_COMPILER)
 
     add_cuda_target(hypertracer_cuda src/main.cu)
 
+    if(WIN32)
+        add_cuda_target(hypertracer_view src/viewer.cu)
+        target_link_libraries(hypertracer_view PRIVATE user32 gdi32)
+    endif()
+
     message(STATUS "CUDA ${CMAKE_CUDA_COMPILER_VERSION} found -- building GPU targets")
 
 else()
