@@ -1,4 +1,5 @@
-// arrows/WASD move, Q/E up down, drag to look, 1-6 scenes, esc quits
+// arrows/WASD move, Q/E up down, drag to look, 1-6 scenes, [ ] cycle,
+// F reframe, esc quits
 
 #include "scenes/all.cuh"
 
@@ -10,6 +11,8 @@
 #include <string>
 #include <vector>
 
+// we steer with yaw/pitch, the render cam wants a lookat point so we rebuild
+// the direction each frame
 struct fly_camera {
     gpoint3 position;
     float yaw = -90.0f;
@@ -31,10 +34,11 @@ struct fly_camera {
         yaw = atan2f(d.z(), d.x()) * 180.0f / GPU_PI;
         pitch = asinf(fminf(fmaxf(d.y(), -1.0f), 1.0f)) * 180.0f / GPU_PI;
         clamp_pitch();
-        speed = fmaxf(6.0f, (s.lookfrom - s.lookat).length() * 0.4f);
+        speed = fmaxf(6.0f, (s.lookfrom - s.lookat).length() * 0.4f);   // big scene, big steps
     }
 
     void clamp_pitch() {
+        // dead up or down and the basis goes undefined
         if (pitch > 88.0f) pitch = 88.0f;
         if (pitch < -88.0f) pitch = -88.0f;
     }
@@ -47,7 +51,11 @@ static float g_mouse_dx = 0.0f;
 static float g_mouse_dy = 0.0f;
 static int g_width = 1280;
 static int g_height = 720;
-static int g_pick_scene = -1;
+static bool g_resized = false;
+
+static int g_pick_scene = -1;   // 0 based, -1 means nothing asked for
+static int g_step_scene = 0;
+static bool g_reframe = false;
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -56,10 +64,22 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_running = false;
             return 0;
 
+        case WM_SIZE: {
+            int w = LOWORD(lp), h = HIWORD(lp);
+            if (w > 0 && h > 0 && (w != g_width || h != g_height)) {
+                g_width = w; g_height = h; g_resized = true;
+            }
+            return 0;
+        }
+
         case WM_KEYDOWN:
             if (wp == VK_ESCAPE) g_running = false;
             if (wp >= '1' && wp <= '9') g_pick_scene = int(wp - '1');
+            if (wp == '0') g_pick_scene = 9;
             if (g_pick_scene >= scene_count) g_pick_scene = -1;
+            if (wp == VK_OEM_4) g_step_scene = -1;   // [
+            if (wp == VK_OEM_6) g_step_scene = +1;   // ]
+            if (wp == 'F') g_reframe = true;
             return 0;
 
         case WM_LBUTTONDOWN:
@@ -88,6 +108,22 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 static bool key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
+static void blit(HWND hwnd, const std::vector<unsigned int>& pixels, int src_w, int src_h) {
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = src_w;
+    info.bmiHeader.biHeight = -src_h;   // negative = rows go top to bottom
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+
+    HDC dc = GetDC(hwnd);
+    StretchDIBits(dc, 0, 0, g_width, g_height, 0, 0, src_w, src_h,
+                  pixels.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+    ReleaseDC(hwnd, dc);
+}
+
+// number them so saving twice doesnt clobber the first one
 int main() {
     int scene_index = 0;
     scene_desc desc = build_scene(scene_index);
@@ -121,9 +157,20 @@ int main() {
     unsigned int* d_pixels = nullptr;
     std::vector<unsigned int> frame;
 
-    CUDA_CHECK(cudaMalloc(&d_accum, size_t(g_width)*g_height * sizeof(gcolor)));
-    CUDA_CHECK(cudaMalloc(&d_pixels, size_t(g_width)*g_height * sizeof(unsigned int)));
-    frame.assign(size_t(g_width)*g_height, 0);
+    auto allocate = [&](int w, int h) {
+        if (d_accum) cudaFree(d_accum);
+        if (d_pixels) cudaFree(d_pixels);
+        CUDA_CHECK(cudaMalloc(&d_accum, size_t(w)*h * sizeof(gcolor)));
+        CUDA_CHECK(cudaMalloc(&d_pixels, size_t(w)*h * sizeof(unsigned int)));
+        frame.assign(size_t(w)*h, 0);
+    };
+    allocate(g_width, g_height);
+
+    int accumulated = 0;
+    bool dirty = true;
+    int scale = 1;   // 2 while flying, 1 when we settle
+    int spp_per_frame = 1;
+    int render_w = g_width, render_h = g_height;
 
     LARGE_INTEGER freq, last;
     QueryPerformanceFrequency(&freq);
@@ -141,16 +188,36 @@ int main() {
         QueryPerformanceCounter(&now);
         double dt = double(now.QuadPart - last.QuadPart) / double(freq.QuadPart);
         last = now;
-        if (dt > 0.1) dt = 0.1;
+        if (dt > 0.1) dt = 0.1;   // dont lurch after a stall
 
-        if (g_pick_scene >= 0 && g_pick_scene != scene_index) {
-            scene_index = g_pick_scene;
+        if (g_resized) {
+            allocate(g_width, g_height);
+            g_resized = false;
+            dirty = true;
+        }
+
+        int wanted = scene_index;
+        if (g_pick_scene >= 0) { wanted = g_pick_scene; g_pick_scene = -1; }
+        if (g_step_scene) {
+            wanted = (scene_index + g_step_scene + scene_count) % scene_count;
+            g_step_scene = 0;
+        }
+        if (wanted != scene_index) {
+            scene.release();
+            scene_index = wanted;
             desc = build_scene(scene_index);
             scene = upload_scene(desc.data);
             fly.frame(desc);
+            dirty = true;
         }
-        g_pick_scene = -1;
 
+        if (g_reframe) {
+            fly.frame(desc);
+            g_reframe = false;
+            dirty = true;
+        }
+
+        bool moving = false;
         if (GetForegroundWindow() == hwnd) {
             float step = fly.speed * float(dt);
             if (key_down(VK_SHIFT)) step *= 4.0f;
@@ -164,16 +231,29 @@ int main() {
             if (key_down('E') || key_down(VK_PRIOR)) move += gvec3(0, 1, 0);
             if (key_down('Q') || key_down(VK_NEXT)) move += gvec3(0, -1, 0);
 
-            if (move.length_squared() > 0.0f)
+            if (move.length_squared() > 0.0f) {
                 fly.position += unit_vector(move) * step;
+                moving = true;
+            }
 
             if (g_mouse_dx != 0.0f || g_mouse_dy != 0.0f) {
                 fly.yaw += g_mouse_dx * 0.18f;
                 fly.pitch -= g_mouse_dy * 0.18f;
                 fly.clamp_pitch();
                 g_mouse_dx = g_mouse_dy = 0.0f;
+                moving = true;
             }
         }
+        if (moving) dirty = true;
+
+        // half res while flying, full res the moment you stop
+        int wanted_scale = moving ? 2 : 1;
+        if (wanted_scale != scale) {
+            scale = wanted_scale;
+            dirty = true;
+        }
+        render_w = (g_width + scale - 1) / scale;
+        render_h = (g_height + scale - 1) / scale;
 
         scene_desc live = desc;
         live.lookfrom = fly.position;
@@ -182,38 +262,48 @@ int main() {
         live.focus_dist = 1.0f;
         live.defocus_angle = 0.0f;
 
-        gcamera cam = camera_for(live, g_width, g_height, 1, 12);
-        cam.image_height = g_height;
+        gcamera cam = camera_for(live, render_w, render_h, spp_per_frame, 30);
+        cam.image_height = render_h;
+
+        if (dirty) {
+            CUDA_CHECK(cudaMemset(d_accum, 0, size_t(render_w)*render_h * sizeof(gcolor)));
+            accumulated = 0;
+            dirty = false;
+        }
 
         dim3 block(8, 8);
-        dim3 grid((g_width + block.x - 1) / block.x, (g_height + block.y - 1) / block.y);
+        dim3 grid((render_w + block.x - 1) / block.x, (render_h + block.y - 1) / block.y);
 
-        CUDA_CHECK(cudaMemset(d_accum, 0, size_t(g_width)*g_height * sizeof(gcolor)));
-        render_kernel<<<grid, block>>>(d_accum, cam, scene.view(), 0x9E3779B97F4A7C15ull);
+        render_kernel<<<grid, block>>>(d_accum, cam, scene.view(),
+                                       0x9E3779B97F4A7C15ull
+                                         + (unsigned long long)accumulated * 1315423911ull);
         CUDA_CHECK(cudaGetLastError());
-        resolve_kernel<<<grid, block>>>(d_accum, d_pixels, g_width, g_height, 1.0f);
+        accumulated += spp_per_frame;
+
+        resolve_kernel<<<grid, block>>>(d_accum, d_pixels, render_w, render_h,
+                                        1.0f / float(accumulated));
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaMemcpy(frame.data(), d_pixels,
-                              size_t(g_width)*g_height * sizeof(unsigned int),
+                              size_t(render_w)*render_h * sizeof(unsigned int),
                               cudaMemcpyDeviceToHost));
 
-        BITMAPINFO info{};
-        info.bmiHeader.biSize = sizeof(info.bmiHeader);
-        info.bmiHeader.biWidth = g_width;
-        info.bmiHeader.biHeight = -g_height;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
+        blit(hwnd, frame, render_w, render_h);
 
-        HDC dc = GetDC(hwnd);
-        StretchDIBits(dc, 0, 0, g_width, g_height, 0, 0, g_width, g_height,
-                      frame.data(), &info, DIB_RGB_COLORS, SRCCOPY);
-        ReleaseDC(hwnd, dc);
+        // aim each frame at ~30fps
+        const double target = 0.033;   // aim for ~30fps
+        int next = int(spp_per_frame * (target / (dt > 1e-6 ? dt : target)) + 0.5);
+        if (next < 1) next = 1;
+        if (next > 64) next = 64;
+        if (next > spp_per_frame + 4) next = spp_per_frame + 4;
+        spp_per_frame = next;
 
-        char title[256];
-        std::snprintf(title, sizeof(title), "hypertracer  |  [%d/%d] %s  |  %.0f fps",
-                      scene_index + 1, scene_count, desc.name.c_str(),
-                      dt > 0 ? 1.0/dt : 0.0);
+        char title[512];
+        std::snprintf(title, sizeof(title),
+                      "hypertracer  |  [%d] %s  |  %d spp  |  %.0f fps  |  %d prims  |  "
+                      "%d/%d  1-%d or [ ] scene, WASD+QE move, drag look, F reframe",
+                      scene_index + 1, desc.name.c_str(), accumulated,
+                      dt > 0 ? 1.0/dt : 0.0, scene.prim_count,
+                      scene_index + 1, scene_count, scene_count);
         SetWindowTextA(hwnd, title);
     }
 
