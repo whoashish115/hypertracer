@@ -4,15 +4,33 @@ A path tracer that runs on the CPU and on CUDA. Six scenes, and a viewer you can
 fly around in while it renders.
 
 ## Scenes
+Everything below was rendered at 1920x1080, 3000 samples, straight out of the
+viewer with `R`. Full size versions are in [examples/](examples).
 
-| | | |
-| --- | --- | --- |
-| 1 | Cube Mountain | stacked cubes at night, lit from inside |
-| 2 | Sphere Pit | fifteen layers of red, green and glass spheres |
-| 3 | Moss Mountain | twelve peaks of yellow green boxes under a grey sky |
-| 4 | Cornell Heap | the cornell box with a pile of stuff dumped in it |
-| 5 | Crystal Cavern | sealed cave, glass columns, glowing cores |
-| 6 | Ice Lake | frozen lake with peaks around it at sunrise |
+**1. Cube Mountain** - stacked cubes at night, lit from inside
+
+![Cube Mountain](examples/1_cube_mountain.png)
+
+**2. Sphere Pit** - fifteen layers of red, green and glass spheres
+
+![Sphere Pit](examples/2_sphere_pit.png)
+
+**3. Moss Mountain** - twelve peaks of yellow green boxes under a grey sky
+
+![Moss Mountain](examples/3_moss_mountain.png)
+
+**4. Cornell Heap** - the cornell box with a pile of stuff dumped in it
+
+![Cornell Heap](examples/4_cornell_heap.png)
+
+**5. Crystal Cavern** - sealed cave, glass columns, glowing cores
+
+![Crystal Cavern](examples/5_crystal_cavern.png)
+
+**6. Ice Lake** - frozen lake with peaks around it at sunrise
+
+![Ice Lake](examples/6_ice_lake.png)
+
 
 ## Build
 
