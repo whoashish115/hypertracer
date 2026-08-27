@@ -94,3 +94,7 @@ with a number on the end so nothing gets overwritten.
 - [Ray Tracing Gems](https://link.springer.com/book/10.1007/978-1-4842-4427-2)
   vol 1 and [vol 2](https://link.springer.com/book/10.1007/978-1-4842-7185-8),
   free from NVIDIA
+
+## License
+
+MIT, see [LICENSE](LICENSE)
