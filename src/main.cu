@@ -6,6 +6,7 @@
 #include "paths.h"
 
 #include <chrono>
+#include <filesystem>
 #include <cstdlib>
 #include <iostream>
 
@@ -31,6 +32,8 @@ int main(int argc, char** argv) {
     }
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+
+    std::filesystem::create_directories(paths::output_dir);
 
     scene_desc desc = build_scene(scene_index);
     gpu_scene scene = upload_scene(desc.data);

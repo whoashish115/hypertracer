@@ -58,7 +58,7 @@ static bool g_resized = false;
 static int g_pick_scene = -1;   // 0 based, -1 means nothing asked for
 static int g_step_scene = 0;
 static bool g_snapshot = false;
-static bool g_full_render= false;
+static bool g_full_render = false;
 static bool g_reframe = false;
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -345,7 +345,6 @@ int main() {
             QueryPerformanceCounter(&last);   // that took ages, dont skew the pacing
         }
 
-        // aim each frame at ~30fps
         const double target = 0.033;   // aim for ~30fps
         int next = int(spp_per_frame * (target / (dt > 1e-6 ? dt : target)) + 0.5);
         if (next < 1) next = 1;
