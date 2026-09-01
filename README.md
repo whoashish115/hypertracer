@@ -12,10 +12,14 @@ Built from scratch with physically based rendering, GPU acceleration, progressiv
   <br>
   <img src="examples/5_crystal_cavern.png" width="49%">
   <img src="examples/6_ice_lake.png" width="49%">
+
 </div>
 
 Everything above was rendered at 1920x1080, 3000 samples, straight out of the
 viewer with `R`. Full size versions are in [examples/](examples).
+
+<video src="examples/viewer.mp4" width="99%" controls></video>
+
 
 ## Build
 
